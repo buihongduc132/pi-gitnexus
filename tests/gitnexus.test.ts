@@ -150,3 +150,71 @@ describe('extractPattern — read', () => {
     expect(extractPattern('read', { path: '/repo/src/ab.ts' })).toBeNull();
   });
 });
+
+describe('extractFilePatternsFromContent', () => {
+  it('extracts file patterns from grep output lines', async () => {
+    const { extractFilePatternsFromContent } = await import('../src/gitnexus');
+    expect(
+      extractFilePatternsFromContent(
+        [{ type: 'text', text: 'src/auth.ts:10:match\nsrc/utils.ts:5:other' }],
+        2,
+      ),
+    ).toEqual(['auth', 'utils']);
+  });
+
+  it('respects limit parameter', async () => {
+    const { extractFilePatternsFromContent } = await import('../src/gitnexus');
+    expect(
+      extractFilePatternsFromContent(
+        [{ type: 'text', text: 'src/auth.ts:1:x\nsrc/utils.ts:2:y\nsrc/config.ts:3:z' }],
+        1,
+      ),
+    ).toEqual(['auth']);
+  });
+
+  it('skips non-matching lines', async () => {
+    const { extractFilePatternsFromContent } = await import('../src/gitnexus');
+    expect(
+      extractFilePatternsFromContent(
+        [{ type: 'text', text: 'no file pattern here\njust text' }],
+        2,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('safeResolvePath', () => {
+  it('resolves paths within cwd', async () => {
+    const { safeResolvePath } = await import('../src/gitnexus');
+    expect(safeResolvePath('src/auth.ts', '/repo')).toBe('/repo/src/auth.ts');
+  });
+
+  it('rejects path traversal', async () => {
+    const { safeResolvePath } = await import('../src/gitnexus');
+    expect(safeResolvePath('../etc/passwd', '/repo')).toBeNull();
+  });
+});
+
+describe('toRepoRelativePath', () => {
+  it('computes relative path within repo', async () => {
+    const { toRepoRelativePath } = await import('../src/gitnexus');
+    expect(toRepoRelativePath('/repo/src/auth.ts', '/repo')).toBe('src/auth.ts');
+  });
+
+  it('returns null for paths outside repo', async () => {
+    const { toRepoRelativePath } = await import('../src/gitnexus');
+    expect(toRepoRelativePath('/etc/passwd', '/repo')).toBeNull();
+  });
+});
+
+describe('validateMcpMode', () => {
+  it('validates mode strings', async () => {
+    const { validateMcpMode } = await import('../src/gitnexus');
+    expect(validateMcpMode('local')).toBe('local');
+    expect(validateMcpMode('remote')).toBe('remote');
+    expect(validateMcpMode('auto')).toBe('auto');
+    expect(validateMcpMode('invalid')).toBe('auto');
+    expect(validateMcpMode(null)).toBe('auto');
+    expect(validateMcpMode(undefined)).toBe('auto');
+  });
+});

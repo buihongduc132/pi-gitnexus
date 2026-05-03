@@ -1,12 +1,31 @@
 import { delimiter } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent';
 import spawn from 'cross-spawn';
-import { clearIndexCache, extractFilePatternsFromContent, extractFilesFromReadMany, extractPattern, findGitNexusIndex, findGitNexusRoot, type GitNexusConfig, gitnexusCmd, loadSavedConfig, resolveGitNexusCmd, runAugment, setAugmentTimeout, setGitnexusCmd, spawnEnv, updateSpawnEnv } from './gitnexus';
-import { mcpClient } from './mcp-client';
+import { clearIndexCache, DEFAULT_SERVER_URL, extractFilePatternsFromContent, extractFilesFromReadMany, extractPattern, findGitNexusIndex, findGitNexusRoot, type GitNexusConfig, gitnexusCmd, loadSavedConfig, type McpMode, resolveGitNexusCmd, runAugment, setAugmentTimeout, setGitnexusCmd, spawnEnv, updateSpawnEnv, validateMcpMode } from './gitnexus';
+import { createMcpClient, type McpClient, mcpClient } from './mcp-client';
 import { registerTools } from './tools';
 import { openMainMenu } from './ui/main-menu';
 
 const SEARCH_TOOLS = new Set(['grep', 'find', 'bash', 'read', 'read_many']);
+
+/**
+ * Run augment via remote MCP query tool instead of local subprocess.
+ * Falls back to empty string on any error (graceful degradation).
+ */
+async function remoteAugment(pattern: string, cwd: string): Promise<string> {
+  if (!augmentMcpClient) return '';
+  try {
+    const repo = findGitNexusRoot(cwd) ?? cwd;
+    return await augmentMcpClient.callTool('query', { query: pattern, repo, limit: 3 }, cwd);
+  } catch {
+    return '';
+  }
+}
+
+/** Run augment: local subprocess or remote MCP depending on mode. */
+function augment(pattern: string, cwd: string): Promise<string> {
+  return isRemoteMode ? remoteAugment(pattern, cwd) : runAugment(pattern, cwd);
+}
 
 /**
  * Merge two PATH values, preferring the agent's PATH over the login shell's PATH
@@ -100,6 +119,12 @@ let sessionCwd = '';
 /** Persisted config — loaded on session_start, mutated by the settings menu. */
 let cfg: GitNexusConfig = {};
 
+/** The active MCP client for augment hooks — may be remote or stdio. */
+let augmentMcpClient: McpClient | null = null;
+
+/** Whether the augment hook should use remote MCP instead of local runAugment. */
+let isRemoteMode = false;
+
 /** Controls whether the tool_result hook auto-appends graph context. Tools are unaffected. */
 let augmentEnabled = true;
 
@@ -164,7 +189,7 @@ export default function(pi: ExtensionAPI) {
         return !augmentedCache.has(key) && !emptyCache.has(key);
       }).slice(0, 5);
       if (fresh.length === 0) return;
-      const results = await Promise.all(fresh.map(f => runAugment(f.pattern, cwd).then(out => ({ f, out }))));
+      const results = await Promise.all(fresh.map(f => augment(f.pattern, cwd).then(out => ({ f, out }))));
       // Cache based on results: successful → augmentedCache, empty → emptyCache
       for (const r of results) {
         const key = r.f.pattern.toLowerCase();
@@ -211,7 +236,7 @@ export default function(pi: ExtensionAPI) {
     // Run augments in parallel, merge results.
     const maxAugments = cfg.maxAugmentsPerResult ?? 3;
     const toRun = fresh.slice(0, maxAugments);
-    const results = await Promise.all(toRun.map(p => runAugment(p, cwd).then(out => ({ p, out }))));
+    const results = await Promise.all(toRun.map(p => augment(p, cwd).then(out => ({ p, out }))));
     // Cache based on results: successful → augmentedCache, empty → emptyCache
     for (const r of results) {
       const key = r.p.toLowerCase();
@@ -232,6 +257,9 @@ export default function(pi: ExtensionAPI) {
 
   async function onSession(ctx: ExtensionContext) {
     mcpClient.stop();
+    augmentMcpClient?.stop();
+    augmentMcpClient = null;
+    isRemoteMode = false;
     clearIndexCache();
     augmentHits = 0;
     hookFires = 0;
@@ -252,7 +280,18 @@ export default function(pi: ExtensionAPI) {
     binaryAvailable = await probeGitNexusBinary();
     if (!findGitNexusIndex(ctx.cwd)) return;
 
-    if (binaryAvailable) {
+    // Determine transport mode for augment hook
+    const mode: McpMode = cfg.mode ?? 'auto';
+    const serverUrl = cfg.serverUrl || DEFAULT_SERVER_URL;
+
+    if (mode === 'remote' || (mode === 'auto' && !binaryAvailable)) {
+      isRemoteMode = true;
+      augmentMcpClient = createMcpClient('remote', serverUrl);
+      ctx.ui.notify(
+        `GitNexus: using remote MCP backend (${serverUrl}).`,
+        'info',
+      );
+    } else if (binaryAvailable) {
       ctx.ui.notify(
         'GitNexus: knowledge graph active — searches will be enriched automatically.',
         'info',

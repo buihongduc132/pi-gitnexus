@@ -62,4 +62,107 @@ describe('/gitnexus command error handling', () => {
     expect(notifyMock).toHaveBeenCalledWith('[GitNexus] repo selection failed', 'error');
     expect(sendUserMessageMock).not.toHaveBeenCalled();
   });
+
+  it('/gitnexus on enables auto-augment', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('on', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('enabled'), 'info');
+  });
+
+  it('/gitnexus off disables auto-augment', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('off', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('disabled'), 'info');
+  });
+
+  it('/gitnexus help shows usage information', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('help', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('Commands:'), 'info');
+  });
+
+  it('/gitnexus context requires a name argument', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('context', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('Usage'), 'info');
+  });
+
+  it('/gitnexus <pattern> does manual augment lookup', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('somePattern', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    // runAugment is mocked to return null, so should notify 'No graph context found'
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('No graph context'), 'info');
+  });
+
+  it('/gitnexus <short> rejects patterns shorter than 3 chars', async () => {
+    const { default: register } = await import('../src/index');
+    register({
+      registerTool: registerToolMock,
+      registerCommand: registerCommandMock,
+      registerFlag: registerFlagMock,
+      on: onMock,
+      getFlag: getFlagMock,
+      sendUserMessage: sendUserMessageMock,
+    } as any);
+
+    const command = registerCommandMock.mock.calls[0][1];
+    await command.handler('ab', { cwd: '/repo-root', ui: { notify: notifyMock } });
+
+    expect(notifyMock).toHaveBeenCalledWith(expect.stringContaining('too short'), 'info');
+  });
 });

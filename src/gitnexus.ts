@@ -24,17 +24,51 @@ export function setGitnexusCmd(cmd: string[]): void { gitnexusCmd = cmd; }
 
 const CONFIG_PATH = join(homedir(), '.pi', 'pi-gitnexus.json');
 
+/** Supported MCP transport modes. */
+export type McpMode = 'auto' | 'local' | 'remote';
+
+/** Persisted configuration for pi-gitnexus. Loaded from ~/.pi/pi-gitnexus.json. */
 export interface GitNexusConfig {
+  /** Transport mode: 'auto' probes local binary first, 'local' forces stdio, 'remote' forces HTTP. */
+  mode?: McpMode;
+  /** Remote MCP server URL (StreamableHTTP). Only used when mode is 'remote' or 'auto' fallback. */
+  serverUrl?: string;
+  /** Local gitnexus command override, e.g. 'npx gitnexus@latest'. */
   cmd?: string;
+  /** Whether the tool_result hook auto-appends graph context. Default: true. */
   autoAugment?: boolean;
+  /** Augment subprocess timeout in seconds. Default: 8. */
   augmentTimeout?: number;
+  /** Maximum number of augment calls per tool_result event. Default: 3. */
   maxAugmentsPerResult?: number;
+  /** Maximum secondary file patterns extracted from grep output. Default: 2. */
   maxSecondaryPatterns?: number;
 }
 
+/** Validate and normalize a McpMode value. Returns 'auto' for invalid values. */
+export function validateMcpMode(mode: unknown): McpMode {
+  if (mode === 'local' || mode === 'remote' || mode === 'auto') return mode;
+  return 'auto';
+}
+
+/** Default remote MCP server URL. */
+export const DEFAULT_SERVER_URL = 'http://100.114.135.99:4747/api/mcp';
+
 export function loadSavedConfig(): GitNexusConfig {
   try {
-    return JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as GitNexusConfig;
+    const raw = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as Record<string, unknown>;
+    // Environment variables take highest precedence over file config
+    const envMode = process.env.GITNEXUS_MODE ? validateMcpMode(process.env.GITNEXUS_MODE) : undefined;
+    const envUrl = process.env.GITNEXUS_SERVER_URL || undefined;
+    return {
+      mode: envMode ?? validateMcpMode(raw.mode),
+      serverUrl: envUrl ?? (typeof raw.serverUrl === 'string' && raw.serverUrl.trim() ? raw.serverUrl.trim() : undefined),
+      cmd: typeof raw.cmd === 'string' ? raw.cmd : undefined,
+      autoAugment: typeof raw.autoAugment === 'boolean' ? raw.autoAugment : undefined,
+      augmentTimeout: typeof raw.augmentTimeout === 'number' ? raw.augmentTimeout : undefined,
+      maxAugmentsPerResult: typeof raw.maxAugmentsPerResult === 'number' ? raw.maxAugmentsPerResult : undefined,
+      maxSecondaryPatterns: typeof raw.maxSecondaryPatterns === 'number' ? raw.maxSecondaryPatterns : undefined,
+    };
   } catch {
     return {};
   }

@@ -233,4 +233,54 @@ describe('auto-augment hook', () => {
     expect(result).toBeUndefined();
     expect(runAugmentMock).not.toHaveBeenCalled();
   });
+
+  it('handles find tool with glob pattern', async () => {
+    runAugmentMock.mockResolvedValue('find-result');
+
+    const { default: register } = await import('../src/index');
+    register(createPi() as any);
+
+    const result = await fireToolResult({
+      toolName: 'find',
+      input: { pattern: '**/auth.ts' },
+      content: [{ type: 'text', text: 'src/auth.ts' }],
+    });
+
+    expect(runAugmentMock).toHaveBeenCalled();
+    expect(result).toBeDefined();
+  });
+
+  it('augments bash tool with grep command', async () => {
+    runAugmentMock.mockResolvedValue('bash-grep-result');
+
+    const { default: register } = await import('../src/index');
+    register(createPi() as any);
+
+    const result = await fireToolResult({
+      toolName: 'bash',
+      input: { command: 'grep "searchTerm" src/' },
+      content: [{ type: 'text', text: 'src/file.ts:10:searchTerm' }],
+    });
+
+    expect(runAugmentMock).toHaveBeenCalledWith('searchTerm', '/repo-root');
+    expect(result).toBeDefined();
+    expect(result.content[1].text).toContain('bash-grep-result');
+  });
+
+  it('handles multiple augments with max limit', async () => {
+    runAugmentMock.mockResolvedValue('augment-result');
+
+    const { default: register } = await import('../src/index');
+    register(createPi() as any);
+
+    // content with multiple file references
+    const result = await fireToolResult({
+      toolName: 'grep',
+      input: { pattern: 'something' },
+      content: [{ type: 'text', text: 'src/a.ts:1:match\nsrc/b.ts:2:match\nsrc/c.ts:3:match\nsrc/d.ts:4:match' }],
+    });
+
+    // Should augment primary + up to maxSecondaryPatterns secondary
+    expect(result).toBeDefined();
+  });
 });
