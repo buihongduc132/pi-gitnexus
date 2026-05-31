@@ -1,5 +1,6 @@
 import spawn from 'cross-spawn';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { safeMkdir } from './safe-mkdir.js';
 import { homedir } from 'os';
 import { basename, extname, join, posix, relative, resolve, sep } from 'path';
 
@@ -76,7 +77,7 @@ export function loadSavedConfig(): GitNexusConfig {
 
 export function saveConfig(config: GitNexusConfig): void {
   try {
-    mkdirSync(join(homedir(), '.pi'), { recursive: true });
+    safeMkdir(join(homedir(), '.pi'));
     writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
   } catch { /* ignore write errors */ }
 }
