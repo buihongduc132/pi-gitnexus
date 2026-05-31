@@ -6,21 +6,20 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tintinweb/pi-gitnexus.git"
+    "url": "https://github.com/buihongduc132/pi-gitnexus.git"
   },
-  "homepage": "https://github.com/tintinweb/pi-gitnexus#readme",
+  "homepage": "https://github.com/buihongduc132/pi-gitnexus#readme",
   "bugs": {
-    "url": "https://github.com/tintinweb/pi-gitnexus/issues"
+    "url": "https://github.com/buihongduc132/pi-gitnexus/issues"
   },
   "keywords": [
     "pi-package",
-    "pi",
     "pi-extension",
+    "pi",
+    "pi-coding-agent",
     "gitnexus",
-    "knowledge-graph",
     "code-intelligence",
-    "call-graph",
-    "agent"
+    "knowledge-graph"
   ],
   "scripts": {
     "build": "tsc",

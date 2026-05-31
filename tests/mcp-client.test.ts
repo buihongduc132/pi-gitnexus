@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 // Hoisted mocks
 const { spawnMock, mockRemoteClient, mockRemoteCallTool, MockRemoteMcpClient } =
@@ -7,7 +7,10 @@ const { spawnMock, mockRemoteClient, mockRemoteCallTool, MockRemoteMcpClient } =
 		const spawn = vi.fn();
 		const remoteCallTool = vi.fn();
 		const remoteClient = { callTool: remoteCallTool, stop: vi.fn() };
-		const MockRemoteMcpClient = vi.fn().mockImplementation(function() { return remoteClient; });
+		// Use regular function (not arrow) so `new MockRemoteMcpClient()` works
+		const MockRemoteMcpClient = vi.fn(function (this: any) {
+			return remoteClient;
+		});
 		return {
 			spawnMock: spawn,
 			mockRemoteClient: remoteClient,
@@ -36,6 +39,17 @@ vi.mock("../src/remote-mcp-client", () => ({
 	RemoteMcpClient: MockRemoteMcpClient,
 }));
 
+// Mock node:fs so readConfigSync returns auto (no config file found)
+vi.mock("node:fs", () => ({
+	...vi.importActual("node:fs"),
+	existsSync: () => false,
+}));
+
+vi.mock("node:os", async () => {
+	const actual = await vi.importActual("node:os");
+	return { ...actual, homedir: () => "/tmp/test-home" };
+});
+
 class FakeStream extends EventEmitter {
 	write = vi.fn();
 	setEncoding = vi.fn();
@@ -43,8 +57,17 @@ class FakeStream extends EventEmitter {
 
 describe("mcp-client", () => {
 	beforeEach(() => {
+		vi.resetModules();
+		// Override any real config (e.g. ~/.pi/pi-gitnexus.json with mode: "remote")
+		// since readConfigSync uses CJS require() which bypasses ESM mocks
+		process.env.GITNEXUS_MODE = "auto";
 		spawnMock.mockReset();
 		mockRemoteCallTool.mockReset();
+	});
+
+	afterEach(() => {
+		delete process.env.GITNEXUS_MODE;
+		delete process.env.GITNEXUS_SERVER_URL;
 	});
 
 	describe("StdioMcpClient", () => {
