@@ -699,13 +699,12 @@ describe("RemoteMcpClient", () => {
 
 	// --- stop() clears session ID ---
 
-	// ─── RED: 404 clears session but does NOT retry (caller sees error) ───
+	// ─── 404 transparent recovery (single retry) ───
 
-	it("RED: on HTTP 404 clears session state but does NOT retry — caller sees the error", async () => {
-		let callCount = 0;
+	it("recovers transparently from HTTP 404 with single retry", async () => {
+		let toolCallCount = 0;
 		mockFetch.mockImplementation(async (_url, init) => {
 			const body = JSON.parse(init?.body as string);
-			callCount++;
 			if (body.method === "initialize") {
 				return mockResponse({
 					ok: true,
@@ -720,8 +719,55 @@ describe("RemoteMcpClient", () => {
 					sessionId: "stale-session-id",
 				});
 			}
-			// Simulate server restart: session evicted → 404
-			callCount++;
+			// tools/call: first call returns 404, retry returns success
+			toolCallCount++;
+			if (toolCallCount === 1) {
+				// Simulate server restart: session evicted → 404
+				return {
+					ok: false,
+					status: 404,
+					headers: new Headers(),
+					text: async () => "session not found",
+				} as Response;
+			}
+			// After re-init: success
+			return mockResponse({
+				ok: true,
+				sessionId: "fresh-session",
+				json: {
+					jsonrpc: "2.0",
+					id: body.id,
+					result: { content: [{ type: "text", text: "recovered" }] },
+				},
+			});
+		});
+
+		// First call initializes, then tools/call gets 404 → transparent retry
+		const result = await client.callTool("query", { query: "test" }, "/repo");
+		expect(result).toContain("recovered");
+		expect(client.isInitialized()).toBe(true);
+	});
+
+	// ─── 404 recovery: second consecutive 404 still throws ───
+
+	it("throws on second consecutive 404 (only retries once)", async () => {
+		mockFetch.mockImplementation(async (_url, init) => {
+			const body = JSON.parse(init?.body as string);
+			if (body.method === "initialize") {
+				return mockResponse({
+					ok: true,
+					sessionId: "session-1",
+					json: { jsonrpc: "2.0", id: body.id, result: { capabilities: {} } },
+				});
+			}
+			if (body.method === "notifications/initialized") {
+				return mockResponse({
+					ok: true,
+					status: 204,
+					sessionId: "session-1",
+				});
+			}
+			// All tools/call return 404 — server permanently down
 			return {
 				ok: false,
 				status: 404,
@@ -730,81 +776,10 @@ describe("RemoteMcpClient", () => {
 			} as Response;
 		});
 
-		// First call succeeds (initializes)
-		const result1 = await client.callTool("query", { query: "test" }, "/repo");
-		expect(result1).toBeDefined();
-		expect(client.isInitialized()).toBe(true);
-
-		// Second call gets 404 → throws (NO transparent retry)
+		// First call: 404 → retry → 404 again → throws
 		await expect(
 			client.callTool("query", { query: "test" }, "/repo"),
 		).rejects.toThrow("HTTP 404");
-
-		// Session state was cleared so next call re-initializes
-		expect(client.isInitialized()).toBe(false);
-
-		// BUG: The caller saw an error even though recovery is possible.
-		// The code clears session on 404 but does NOT retry the failed request.
-		// Next call would succeed, but the caller already received an error.
-	});
-
-	// ─── RED: 404 recovery should be transparent (single retry) — currently MISSING ───
-
-	it("RED: should retry once on 404 for transparent recovery but currently does NOT", async () => {
-		let fetchCount = 0;
-		mockFetch.mockImplementation(async (_url, init) => {
-			const body = JSON.parse(init?.body as string);
-			fetchCount++;
-			if (body.method === "initialize") {
-				return mockResponse({
-					ok: true,
-					sessionId: "session-1",
-					json: { jsonrpc: "2.0", id: body.id, result: { capabilities: {} } },
-				});
-			}
-			if (body.method === "notifications/initialized") {
-				return mockResponse({
-					ok: true,
-					status: 204,
-					sessionId: "session-1",
-				});
-			}
-			if (body.method === "tools/call") {
-				// First tools/call: 404 (stale session)
-				if (fetchCount <= 4) {
-					return {
-						ok: false,
-						status: 404,
-						headers: new Headers(),
-						text: async () => "session not found",
-					} as Response;
-				}
-				// After re-init: success
-				return mockResponse({
-					ok: true,
-					sessionId: "session-2",
-					json: {
-						jsonrpc: "2.0",
-						id: body.id,
-						result: { content: [{ type: "text", text: "recovered" }] },
-					},
-				});
-			}
-			return mockResponse({ ok: true, json: {} });
-		});
-
-		// Initialize succeeds
-		await client.callTool("query", { query: "init" }, "/repo");
-		expect(client.isInitialized()).toBe(true);
-
-		// tools/call returns 404 → currently throws, caller sees error
-		// EXPECTED BEHAVIOR: should retry once after re-init and succeed
-		await expect(
-			client.callTool("query", { query: "test" }, "/repo"),
-		).rejects.toThrow("HTTP 404");
-
-		// BUG: callTool should have retried once after clearing session.
-		// Instead, it cleared session and threw — leaving recovery to the caller.
 	});
 
 	// ─── RED: stop() sets stopped=false instead of true (re-use bypasses safety checks) ───
@@ -852,7 +827,7 @@ describe("RemoteMcpClient", () => {
 
 	// ─── RED: JSON-RPC id is always 1 (concurrent call collision) ───
 
-	it("RED: JSON-RPC id is always 1 — concurrent calls have id collision", async () => {
+	it("uses unique JSON-RPC ids for concurrent calls", async () => {
 		let receivedIds: number[] = [];
 		mockFetch.mockImplementation(async (_url, init) => {
 			const body = JSON.parse(init?.body as string);
@@ -867,7 +842,6 @@ describe("RemoteMcpClient", () => {
 				return mockResponse({ ok: true, status: 204, sessionId: "test-session" });
 			}
 			if (body.method === "tools/call") {
-				// BUG: id is always 1 (line 85 of remote-mcp-client.ts)
 				receivedIds.push(body.id);
 				return mockResponse({
 					ok: true,
@@ -884,11 +858,12 @@ describe("RemoteMcpClient", () => {
 			client.callTool("query", { query: "c" }, "/repo"),
 		]);
 
-		// BUG: All tool calls have id=1. JSON-RPC 2.0 spec requires unique
-		// ids for request/response correlation. If the server responds out of
-		// order, the client can't match responses to requests.
-		expect(new Set(receivedIds).size).toBe(1);
-		expect(receivedIds[0]).toBe(1);
+		// Each tool call should have a unique JSON-RPC id
+		expect(new Set(receivedIds).size).toBe(receivedIds.length);
+		// Ids should be monotonically increasing (initialized after init+notif+call sequence)
+		for (let i = 1; i < receivedIds.length; i++) {
+			expect(receivedIds[i]).toBeGreaterThan(receivedIds[i - 1]);
+		}
 	});
 
 	// ─── RED: Double timeout (AbortController + Promise.race) ───
