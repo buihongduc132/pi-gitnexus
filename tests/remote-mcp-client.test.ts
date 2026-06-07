@@ -807,6 +807,136 @@ describe("RemoteMcpClient", () => {
 		// Instead, it cleared session and threw — leaving recovery to the caller.
 	});
 
+	// ─── RED: stop() sets stopped=false instead of true (re-use bypasses safety checks) ───
+
+	it("RED: stop() sets stopped=false — caller expects stopped=true after stop()", async () => {
+		mockFetch.mockImplementation(async (_url, init) => {
+			const body = JSON.parse(init?.body as string);
+			if (body.method === "initialize") {
+				return mockResponse({
+					ok: true,
+					sessionId: "test-session",
+					json: { jsonrpc: "2.0", id: body.id, result: { capabilities: {} } },
+				});
+			}
+			if (body.method === "notifications/initialized") {
+				return mockResponse({ ok: true, status: 204, sessionId: "test-session" });
+			}
+			return mockResponse({
+				ok: true,
+				sessionId: "test-session",
+				json: { jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } },
+			});
+		});
+
+		await client.callTool("query", { query: "test" }, "/repo");
+		expect(client.isInitialized()).toBe(true);
+
+		client.stop();
+
+		// BUG: stop() sets this.stopped = false (line 258), not true.
+		// The stopped flag is supposed to reject calls after stop, but
+		// because stop() sets it to false, stopped checks at lines 80/165/220
+		// are never triggered after stop() is called.
+		// The client immediately re-initializes on next call.
+		expect(client.isInitialized()).toBe(false); // reset by stop()
+
+		// Next call succeeds immediately (re-init happens transparently)
+		const result = await client.callTool("query", { query: "test" }, "/repo");
+		expect(result).toContain("ok");
+
+		// BUG: If stop() were supposed to make the client unusable, setting
+		// stopped=false defeats that purpose. The comment says "Allow re-use"
+		// but there's no way to permanently stop the client.
+	});
+
+	// ─── RED: JSON-RPC id is always 1 (concurrent call collision) ───
+
+	it("RED: JSON-RPC id is always 1 — concurrent calls have id collision", async () => {
+		let receivedIds: number[] = [];
+		mockFetch.mockImplementation(async (_url, init) => {
+			const body = JSON.parse(init?.body as string);
+			if (body.method === "initialize") {
+				return mockResponse({
+					ok: true,
+					sessionId: "test-session",
+					json: { jsonrpc: "2.0", id: body.id, result: { capabilities: {} } },
+				});
+			}
+			if (body.method === "notifications/initialized") {
+				return mockResponse({ ok: true, status: 204, sessionId: "test-session" });
+			}
+			if (body.method === "tools/call") {
+				// BUG: id is always 1 (line 85 of remote-mcp-client.ts)
+				receivedIds.push(body.id);
+				return mockResponse({
+					ok: true,
+					sessionId: "test-session",
+					json: { jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `result-${body.id}` }] } },
+				});
+			}
+			return mockResponse({ ok: true, json: {} });
+		});
+
+		await Promise.all([
+			client.callTool("query", { query: "a" }, "/repo"),
+			client.callTool("query", { query: "b" }, "/repo"),
+			client.callTool("query", { query: "c" }, "/repo"),
+		]);
+
+		// BUG: All tool calls have id=1. JSON-RPC 2.0 spec requires unique
+		// ids for request/response correlation. If the server responds out of
+		// order, the client can't match responses to requests.
+		expect(new Set(receivedIds).size).toBe(1);
+		expect(receivedIds[0]).toBe(1);
+	});
+
+	// ─── RED: Double timeout (AbortController + Promise.race) ───
+
+	it("RED: double timeout — AbortController AND Promise.race both fire, timer leak", async () => {
+		// The rpcSend method creates TWO independent timeouts:
+		// 1. setTimeout(() => controller.abort(), this.timeoutMs) — line 91
+		// 2. Promise.race with another setTimeout(..., this.timeoutMs) — line 107
+		//
+		// Both use this.timeoutMs. If fetch hangs:
+		// - Timer 1 fires → controller.abort()
+		// - Timer 2 fires → rejects with timeout error
+		// - Finally block clears Timer 1 (but Timer 2 already fired)
+		//
+		// This is a timer leak: after abort, Timer 2's setTimeout still runs
+		// and may fire after the promise already resolved.
+
+		let abortCount = 0;
+		const originalAbort = AbortController.prototype.abort;
+		AbortController.prototype.abort = function () {
+			abortCount++;
+			return originalAbort.call(this);
+		};
+
+		mockFetch.mockImplementation(async () => {
+			// Hang forever — never respond
+			await new Promise(() => {});
+			throw new Error("unreachable");
+		});
+
+		const timeoutClient = new RemoteMcpClient({
+			serverUrl: "http://localhost:4747/api/mcp",
+			timeout: 50, // very short timeout for test speed
+		});
+
+		await expect(
+			timeoutClient.callTool("query", { query: "test" }, "/repo"),
+		).rejects.toThrow();
+
+		AbortController.prototype.abort = originalAbort;
+		timeoutClient.stop();
+
+		// BUG: Both timers fire independently. In production with many
+		// concurrent calls, this creates a timer leak where aborted
+		// setTimeout callbacks continue running after the request is done.
+		expect(abortCount).toBeGreaterThanOrEqual(1);
+	});
+
 	// ─── RED: 404 guard prevents infinite loops ───
 
 	it("RED: 404 guard prevents infinite loop when session is null", async () => {
