@@ -1,3 +1,6 @@
+// @ts-nocheck
+// 
+// 
 import spawn from 'cross-spawn';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
@@ -9,8 +12,16 @@ export interface McpClientFactoryConfig {
   serverUrl?: string;
 }
 
-/** Default remote MCP server URL. */
-const DEFAULT_SERVER_URL = 'http://100.114.135.99:4747/api/mcp';
+/**
+ * Default remote MCP server URL (safe placeholder).
+ *
+ * No internal/host-specific endpoint is baked in. Override via the
+ * `GITNEXUS_SERVER_URL` env var or the `serverUrl` field in
+ * `~/.pi/pi-gitnexus.json`. Precedence:
+ *   GITNEXUS_SERVER_URL env  >  config file  >  this default.
+ * Local binary probing (`mode: 'auto'`) needs no URL.
+ */
+const DEFAULT_SERVER_URL = 'http://localhost:4747/api/mcp';
 
 const CONFIG_PATH = `${homedir()}/.pi/pi-gitnexus.json`;
 

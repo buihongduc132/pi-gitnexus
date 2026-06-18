@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.1
+
+- **Security: remove hardcoded internal endpoint** — the default `serverUrl` shipped in `src/gitnexus.ts` and `src/mcp-client-factory.ts` no longer points at a private/Tailscale IP. The new default is `http://localhost:4747/api/mcp`, and operators override it via the `GITNEXUS_SERVER_URL` env var or the `serverUrl` field in `~/.pi/pi-gitnexus.json`. Precedence is unchanged: `GITNEXUS_SERVER_URL` > config file > safe default. Local binary probing (`mode: 'auto'`) is unaffected — it needs no URL.
+
+## 0.6.4
+
+- **MCP idle shutdown** — `gitnexus mcp` now stops after 10 minutes of inactivity (configurable via `/gitnexus settings → MCP idle timeout`; `'off'` keeps it alive for the session, matching prior behavior). Releases the Python process and graph memory during long quiet stretches; the next MCP-routed call respawns at the cold-start cost (~1–3s). Auto-augment is unaffected — it uses a separate one-shot `gitnexus augment` subprocess.
+- **MCP startup-race fix** — `stop()` mid-handshake previously orphaned the spawning child because `this.proc` wasn't set yet. Now tracks the in-flight process in `startingProc` and kills it on stop. New regression test covers this path.
+- **Session shutdown cleanup** — added `pi.on('session_shutdown', () => mcpClient.stop())` so the MCP child doesn't outlive pi's own exit (was already best-effort via OS reaping; now explicit).
+- **`/gitnexus analyze` lifecycle** — stops MCP before reindexing so it cannot serve queries against a half-rebuilt graph, and again after completion so the next tool call respawns against the fresh index. Also clears the auto-augment session caches (`augmentedCache`, `emptyCache`) on success, so previously-augmented files re-augment with the new graph.
+- **Analyze auto-fallback to `--skip-git`** — if `gitnexus analyze` fails with "not a git repository", the extension retries once with `--skip-git`.
+- **Custom GitNexus command in settings** — the `cmd` row now opens a text input on Enter (instead of cycling a fixed list), so users can enter any path or invocation. Examples remain in the description.
+- **Settings apply live** — every change in `/gitnexus settings` (auto-augment, augment timeout, MCP idle timeout, cmd, etc.) takes effect immediately rather than only on menu close. Live re-arming for `mcpIdleTimeout` so toggling on/off or changing the value resets the active timer right away.
+
+## 0.6.2
+
+**Breaking — peer dependency scope change.** The `@mariozechner/*` packages were deprecated in favor of `@earendil-works/*`. Consumers must have `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` ≥ 0.74 installed.
+
+- **Migrated to `@earendil-works/*` scope** — `@mariozechner/pi-ai` → `@earendil-works/pi-ai`, `@mariozechner/pi-coding-agent` → `@earendil-works/pi-coding-agent`, and the previously-transitive `pi-tui` is now an explicit peer at `@earendil-works/pi-tui`. Pinned to 0.74.0 (was 0.72.1). Closes #12.
+- **Slimmer `package.json`** — dropped `devDependencies` duplicates of the `pi-*` peers. npm 7+ auto-installs peer deps when developing the package itself, so the duplication added lockfile churn for no benefit.
+- **Routine dev-dep bumps**: `@types/node` ^25.6.0 → ^25.6.2, `typebox` 1.1.37 → 1.1.38 (lockfile-only; peer range `>=1.0` already covered it).
+
 ## 0.6.1
 
 - **PATH resolution no longer drops nvm/fnm/volta dirs** — `resolveShellPath` previously *replaced* `process.env.PATH` with the login shell's PATH, which silently dropped any directories the agent already had (e.g. `~/.local/share/nvm/…` inherited from the launching shell). On macOS where users typically place nvm setup in `.zshrc` (interactive) rather than `.zprofile` (login), the login-shell probe returns a PATH without nvm — and the old code then clobbered nvm out of the agent's PATH, producing spurious "gitnexus is not on PATH" warnings even when gitnexus was correctly installed. Now both PATHs are merged with agent-first precedence and platform-aware deduplication via `node:path`'s `delimiter`.

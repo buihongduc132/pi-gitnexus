@@ -11,7 +11,7 @@ On this machine:
 
 - The npm `gitnexus@1.6.3` binary is a stub (`exit 0`)
 - Even with a working binary, LadybugDB segfaults (Node 22 Docker vs Node 24 host ABI mismatch)
-- A centralized GitNexus server runs on bhd-main2 (`http://100.114.135.99:4747`) and writes `.gitnexus/` indexes locally via shared mount
+- A centralized GitNexus server runs on bhd-main2 and writes `.gitnexus/` indexes locally via shared mount. The default `serverUrl` in the source code is a safe placeholder (`http://localhost:4747/api/mcp`); operators set the real endpoint via the `GITNEXUS_SERVER_URL` env var or `~/.pi/pi-gitnexus.json#serverUrl`.
 - The server exposes MCP tools via StreamableHTTP at `/api/mcp`
 
 ## Approach: Dual Transport with Auto-Detection
@@ -31,7 +31,7 @@ mode=remote  → StreamableHTTP to server
 ```jsonc
 {
   "mode": "auto", // "auto" | "local" | "remote"
-  "serverUrl": "http://100.114.135.99:4747/api/mcp",
+  "serverUrl": "http://localhost:4747/api/mcp", // safe default; override via GITNEXUS_SERVER_URL env or this field
   // existing fields...
   "cmd": "", // local command override
   "autoAugment": true,

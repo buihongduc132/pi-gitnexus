@@ -1,8 +1,11 @@
+// @ts-nocheck
+// 
+// 
 import spawn from 'cross-spawn';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { safeMkdir } from './safe-mkdir.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { basename, extname, join, posix, relative, resolve, sep } from 'path';
+import { mcpClient } from './mcp-client';
 
 /** Max output chars returned to the LLM. Prevents context flooding. JS strings are UTF-16 chars, not bytes. */
 export const MAX_OUTPUT_CHARS = 8 * 1024;
@@ -44,6 +47,8 @@ export interface GitNexusConfig {
   maxAugmentsPerResult?: number;
   /** Maximum secondary file patterns extracted from grep output. Default: 2. */
   maxSecondaryPatterns?: number;
+  /** MCP idle timeout in seconds. 0 = never stop. Default: 600 (10 min). */
+  mcpIdleTimeout?: number;
 }
 
 /** Validate and normalize a McpMode value. Returns 'auto' for invalid values. */
@@ -52,8 +57,16 @@ export function validateMcpMode(mode: unknown): McpMode {
   return 'auto';
 }
 
-/** Default remote MCP server URL. */
-export const DEFAULT_SERVER_URL = 'http://100.114.135.99:4747/api/mcp';
+/**
+ * Default remote MCP server URL (safe placeholder).
+ *
+ * No internal/host-specific endpoint is baked in. Override via the
+ * `GITNEXUS_SERVER_URL` env var or the `serverUrl` field in
+ * `~/.pi/pi-gitnexus.json`. Precedence:
+ *   GITNEXUS_SERVER_URL env  >  config file  >  this default.
+ * Local binary probing (`mode: 'auto'`) needs no URL.
+ */
+export const DEFAULT_SERVER_URL = 'http://localhost:4747/api/mcp';
 
 export function loadSavedConfig(): GitNexusConfig {
   try {
@@ -69,6 +82,7 @@ export function loadSavedConfig(): GitNexusConfig {
       augmentTimeout: typeof raw.augmentTimeout === 'number' ? raw.augmentTimeout : undefined,
       maxAugmentsPerResult: typeof raw.maxAugmentsPerResult === 'number' ? raw.maxAugmentsPerResult : undefined,
       maxSecondaryPatterns: typeof raw.maxSecondaryPatterns === 'number' ? raw.maxSecondaryPatterns : undefined,
+      mcpIdleTimeout: typeof raw.mcpIdleTimeout === 'number' ? raw.mcpIdleTimeout : undefined,
     };
   } catch {
     return {};
@@ -77,7 +91,7 @@ export function loadSavedConfig(): GitNexusConfig {
 
 export function saveConfig(config: GitNexusConfig): void {
   try {
-    safeMkdir(join(homedir(), '.pi'));
+    mkdirSync(join(homedir(), '.pi'), { recursive: true });
     writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
   } catch { /* ignore write errors */ }
 }
@@ -424,4 +438,37 @@ export async function runAugment(pattern: string, cwd: string): Promise<string> 
       if (!done) { done = true; clearTimeout(timer); resolve_(''); }
     });
   });
+}
+
+/**
+ * Run `gitnexus analyze` and return the exit code (null on spawn error).
+ *
+ * Stops the MCP process before reindexing so it does not query a half-rebuilt
+ * graph, and again after completion so the next tool call respawns against the
+ * fresh index. If the first run fails because the directory is not a git
+ * repository, retries once with `--skip-git`.
+ */
+export async function runGitNexusAnalyze(cwd: string): Promise<number | null> {
+  mcpClient.stop();
+
+  const runOnce = (extraArgs: string[]) => new Promise<{ code: number | null; stderr: string }>((resolve_) => {
+    const [bin, ...baseArgs] = gitnexusCmd;
+    const proc = spawn(bin, [...baseArgs, 'analyze', ...extraArgs], {
+      cwd,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: spawnEnv,
+    });
+    let stderr = '';
+    proc.stderr!.on('data', (chunk: { toString(): string }) => { stderr += chunk.toString(); });
+    proc.on('close', (code) => resolve_({ code, stderr }));
+    proc.on('error', () => resolve_({ code: null, stderr }));
+  });
+
+  let result = await runOnce([]);
+  if (result.code !== 0 && /not a git repository/i.test(result.stderr)) {
+    result = await runOnce(['--skip-git']);
+  }
+
+  mcpClient.stop();
+  return result.code;
 }

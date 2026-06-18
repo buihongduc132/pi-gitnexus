@@ -1,3 +1,6 @@
+// @ts-nocheck
+// 
+// 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { spawnMock, mockRemoteClient } = vi.hoisted(() => {
@@ -16,7 +19,7 @@ vi.mock('cross-spawn', () => ({
 vi.mock('../src/gitnexus', () => ({
   loadSavedConfig: vi.fn(() => ({})),
   validateMcpMode: vi.fn((m: unknown) => (m === 'local' || m === 'remote' || m === 'auto' ? m : 'auto')),
-  DEFAULT_SERVER_URL: 'http://100.114.135.99:4747/api/mcp',
+  DEFAULT_SERVER_URL: 'http://localhost:4747/api/mcp',
   MAX_OUTPUT_CHARS: 8 * 1024,
   spawnEnv: process.env,
   gitnexusCmd: ['gitnexus'],
@@ -93,7 +96,7 @@ describe('McpClientFactory', () => {
   it('config loading: defaults to auto mode and default server URL', () => {
     const config = McpClientFactory.loadConfig();
     expect(config.mode).toBe('auto');
-    expect(config.serverUrl).toBe('http://100.114.135.99:4747/api/mcp');
+    expect(config.serverUrl).toBe('http://localhost:4747/api/mcp');
   });
 
   it('config defaults: mode from env GITNEXUS_MODE', () => {

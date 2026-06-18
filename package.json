@@ -1,6 +1,6 @@
 {
   "name": "pi-gitnexus-fork",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "GitNexus knowledge graph integration for pi \u2014 enriches searches with call chains, execution flows, and blast radius",
   "author": "tintinweb",
   "license": "MIT",
