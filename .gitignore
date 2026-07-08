@@ -44,7 +44,7 @@ CLAUDE.mdcoverage/
 .sg-sha
 .sgignore
 sgconfig.yml
-.hindsight.json
 .gitnexus/
 .gitnexusignore
 .bug-hunter/
+.fusion
